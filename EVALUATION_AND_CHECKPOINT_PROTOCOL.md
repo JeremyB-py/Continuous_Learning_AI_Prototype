@@ -151,7 +151,7 @@ Hash: 9f7c1a04b... verified
 All promotions must be accompanied by:
 
 * Updated changelog entry
-* Updated `RISKS_AND_MITIGATION.md` if new risk category arises
+* Updated `LIMITATIONS_AND_SAFEGUARDS.md` if new risk category arises
 * Recalculated baseline metrics
 
 ---

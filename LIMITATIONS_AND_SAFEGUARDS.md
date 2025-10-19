@@ -12,7 +12,7 @@ Moral statements like “Never cause harm” or “Do not purposely deceive” c
 
 **Mitigations:**
 
-* Maintain an *executable moral unit-test suite* (each rule represented as a verifiable assertion).
+* Maintain an executable moral unit-test suite (each rule represented as a verifiable assertion).
 * Develop a **Moral Language Interpreter** module separately, mapping abstract terms (“harm”, “deceive”) to measurable proxies or ontology entries.
 * Keep moral definitions minimal and immutable; allow only append-style clarifications under strict review.
 * Document every moral-rule update as a signed transaction with human oversight.
@@ -44,7 +44,7 @@ External human or model oversight can introduce biases or contradictory moral gu
 **Mitigations:**
 
 * Implement an **alignment flag** system: the learner can raise a `misalignment_alert` when new supervision conflicts with high-confidence confirmed knowledge.
-* Periodically perform *human-in-the-loop reflection* to evaluate oversight sources.
+* Periodically perform **Supervision Bias Reflection (SBR)** to evaluate oversight sources.
 * Require multi-signature (multi-reviewer) approval for any moral rule modification.
 * Maintain transparent version control and public change logs for all oversight actions.
 

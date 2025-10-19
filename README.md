@@ -4,17 +4,17 @@
 
 ## **Purpose**
 
-**CLAIP** is an open, long-term exploration into *continuous learning*, *ethical machine reasoning*, and *AI self-reflection.*
-Its aim is to investigate how an artificial system can improve its understanding over time **without compromising on moral or safety foundations**.
+**CLAIP** is an open, long-term exploration into continuous learning, ethical machine reasoning, and AI self-reflection.
+Its aim is to investigate how an artificial system can improve its understanding over time without compromising on moral or safety foundations.
 
-This repository serves as both a **research notebook** and a **prototype implementation**, combining philosophy, code, and testing protocols to experiment with:
+This repository serves as both a research notebook and a prototype implementation, combining philosophy, code, and testing protocols to experiment with:
 
 * Incremental and self-correcting learning processes
 * Moral invariants that cannot be altered by the system itself
 * Methods for epistemic self-assessment and calibration
 * Long-term memory and bias mitigation strategies
 
-There is no deadline or commercial goal; the intent is **slow, careful progress** toward understanding what *responsible continual learning* might look like.
+There is no deadline or commercial goal; the intent is slow, careful progress toward understanding what responsible continual learning might look like.
 
 ---
 
@@ -23,7 +23,7 @@ There is no deadline or commercial goal; the intent is **slow, careful progress*
 > **Phase 1: Foundation & Safety Core**
 > The current implementation focuses on:
 
-* A working *Continuous Learner* prototype written in Python
+* A working **Continuous Learner** prototype written in Python
 * Immutable moral rules and static safety checks
 * Knowledge ingestion, prediction, and reflection cycles
 * Periodic self-evaluation and bias detection
@@ -41,7 +41,7 @@ Subsequent phases will add persistent memory, replay buffers, online model integ
    Performance rewards can never override moral invariants.
 3. **Continuous learning, not infinite confidence.**
    The system must quantify its uncertainty and seek calibration.
-4. **Simplicity first.**
+4. **Safety first.**
    Every new subsystem must prove its necessity and safety before inclusion.
 5. **Fallibility acknowledged.**
    The system, like its creators, will be imperfect. The goal is continual improvement, not perfection.
@@ -141,12 +141,12 @@ Key moral principles currently enforced:
 
 ## **Contributing & Experimentation**
 
-This project encourages **open discussion and incremental experimentation.**
+This project encourages open discussion and incremental experimentation.
 To contribute safely:
 
 1. Fork and create a feature branch.
-2. Follow the [Model Testing Protocol](docs/MODEL_TESTING_PROTOCOL.md).
-3. Document new risks or lessons in [Risks & Mitigation](docs/RISKS_AND_MITIGATION.md).
+2. Follow the [Model Testing Protocol](docs/EVALUATION_AND_CHECKPOINT_PROTOCOL.md).
+3. Document new risks or lessons in [Risks & Mitigation](docs/LIMITATIONS_AND_SAFEGUARDS.md).
 4. Submit a pull request with:
 
    * Metrics report
@@ -159,7 +159,7 @@ Contributors should abide by the project’s *Ethical Conduct Policy* (to be dra
 
 ## **License**
 
-This repository is released under the **MIT License** for the code,
+This repository is released under the **GNU General Public License v3.0** for the code,
 but **research notes and moral framework** are licensed under **CC BY-SA 4.0**,
 to ensure derivative works share improvements responsibly.
 
@@ -177,7 +177,7 @@ For collaboration or idea exchange:
 
 ## **Closing Note**
 
-CLAIP is not an attempt to build a perfect AI, it’s a journey toward building a *trustworthy one*.
+CLAIP is not an attempt to build a perfect AI, it’s a journey toward building a trustworthy contribution to the world of AI.
 It is a human experiment in curiosity, ethics, and persistence.
 
 
