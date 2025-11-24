@@ -1,6 +1,31 @@
-pandas
-numpy
-scikit-learn
-matplotlib
-# Optional: online learning
-river
+# Continuous Learning AI Prototype (CLAIP) - Dependencies
+# Python ≥ 3.11 required
+
+# ============================================================================
+# CORE DEPENDENCIES
+# ============================================================================
+# The current core implementation uses only Python standard library.
+# No external dependencies are required for basic functionality.
+# However, the packages below are included for future development phases.
+
+# ============================================================================
+# Data Science & Machine Learning Libraries
+# ============================================================================
+# Planned for future phases: online learning, analytics, visualization
+# These are optional but recommended for full functionality
+
+pandas>=2.0.0,<3.0.0  # Data manipulation and analysis
+numpy>=1.24.0,<2.0.0  # Numerical computing
+scikit-learn>=1.3.0,<2.0.0  # Machine learning utilities
+matplotlib>=3.7.0,<4.0.0  # Visualization and plotting
+river>=0.20.0,<1.0.0  # Online machine learning (incremental learning)
+
+# ============================================================================
+# Development & Testing Tools (Optional)
+# ============================================================================
+# Uncomment for development workflow:
+# pytest>=7.4.0,<8.0.0  # Testing framework
+# pytest-cov>=4.1.0,<5.0.0  # Coverage reporting
+# black>=23.0.0,<24.0.0  # Code formatting
+# mypy>=1.5.0,<2.0.0  # Static type checking
+# ruff>=0.1.0,<1.0.0  # Fast linter and formatter

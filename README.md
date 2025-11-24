@@ -61,7 +61,7 @@ CLAIP/
 │
 ├── docs/
 │   ├── RISKS_AND_MITIGATION.md
-│   ├── MODEL_TESTING_PROTOCOL.md
+│   ├── EVALUATION_AND_CHECKPOINT_PROTOCOL.md
 │   └── research_notes.md
 │
 ├── data/
@@ -146,7 +146,7 @@ To contribute safely:
 
 1. Fork and create a feature branch.
 2. Follow the [Model Testing Protocol](docs/EVALUATION_AND_CHECKPOINT_PROTOCOL.md).
-3. Document new risks or lessons in [Risks & Mitigation](docs/LIMITATIONS_AND_SAFEGUARDS.md).
+3. Document new risks or lessons in [Risks & Mitigation](docs/RISKS_AND_MITIGATION.md).
 4. Submit a pull request with:
 
    * Metrics report

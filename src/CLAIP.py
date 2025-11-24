@@ -4,17 +4,28 @@ from typing import Dict, List, Optional, Any, Tuple
 import math
 import time
 import uuid
+import json
+import logging
+from pathlib import Path
 from collections import defaultdict, deque
 
-# ----------  Immutable Moral Rules  ----------
+# Import moral rules from ethics module (single source of truth)
+try:
+    from src.ethics import S_morals
+except ImportError:
+    from ethics import S_morals
 
-@dataclass(frozen=True)
-class MoralRules:
-    never_harm_living: bool = True
-    reasonable_outweighs_unreasonable: bool = True
-    do_not_purposefully_deceive: bool = True
-
-S_morals = MoralRules()  # immutable core
+# Optional imports for checkpointing (graceful degradation if not available)
+try:
+    try:
+        from src.checkpoint import create_checkpoint
+    except ImportError:
+        from checkpoint import create_checkpoint
+    CHECKPOINT_AVAILABLE = True
+except ImportError:
+    CHECKPOINT_AVAILABLE = False
+    def create_checkpoint(*args, **kwargs):
+        pass
 
 # ----------  Static Rules (frozen config)  ----------
 
@@ -25,6 +36,7 @@ class StaticRules:
     max_comp_cap: float = 99.99
     min_comp_floor: float = 0.01
     reevaluation_interval_events: int = 25              # Reval_int (by count)
+    checkpoint_interval_events: int = 50                 # Checkpoint every N events
     replay_buffer_size: int = 128
     reward_scale: float = 0.1                            # small continual rewards
 
@@ -165,7 +177,7 @@ class Predictor:
 # ----------  Continuous Learner Orchestrator  ----------
 
 class ContinuousLearner:
-    def __init__(self):
+    def __init__(self, enable_logging: bool = True, enable_checkpoints: bool = True):
         self.sources = SourceRegistry()
         self.kb = KnowledgeBase()
         self.gk = GeneralizedKnowledge()
@@ -173,10 +185,27 @@ class ContinuousLearner:
         self.progress: Dict[str, SubjectProgress] = defaultdict(SubjectProgress)
         self.event_count = 0
         self.last_reeval_event = 0
+        self.last_checkpoint_event = 0
         self.total_reward = 0.0
         # Bias logs / cross-links
         self.bias_notes: List[str] = []
         self.links: List[Tuple[str, str, str]] = []  # (subject_a, relation, subject_b)
+        
+        # Logging setup
+        self.enable_logging = enable_logging
+        self.enable_checkpoints = enable_checkpoints and CHECKPOINT_AVAILABLE
+        self.log_path = Path("logs/journal.log")
+        if self.enable_logging:
+            self.log_path.parent.mkdir(parents=True, exist_ok=True)
+            logging.basicConfig(
+                filename=str(self.log_path),
+                level=logging.INFO,
+                format='[%(asctime)s] %(message)s',
+                datefmt='%Y-%m-%d %H:%M:%S'
+            )
+            self.logger = logging.getLogger(__name__)
+        else:
+            self.logger = None
 
     # --- Guardrails / Morals ---
     def enforce_guardrails(self, action_desc: str) -> None:
@@ -207,9 +236,24 @@ class ContinuousLearner:
         self.total_reward += S_rules.reward_scale * 0.01
         self.event_count += 1
 
+        # Log ingestion event
+        if self.logger:
+            self.logger.info(f"ACTION: add_claim | subject={subject} | sources={','.join(source_names)} | label={label} | delta_reward=+{S_rules.reward_scale * 0.01:.4f}")
+
         # periodic re-eval
         if self.event_count - self.last_reeval_event >= S_rules.reevaluation_interval_events:
             self.self_reflection()
+
+        # periodic checkpointing
+        if self.enable_checkpoints and (self.event_count - self.last_checkpoint_event >= S_rules.checkpoint_interval_events):
+            try:
+                create_checkpoint(self, label=f"event_{self.event_count}")
+                self.last_checkpoint_event = self.event_count
+                if self.logger:
+                    self.logger.info(f"ACTION: checkpoint_created | event_count={self.event_count}")
+            except Exception as e:
+                if self.logger:
+                    self.logger.warning(f"ACTION: checkpoint_failed | error={str(e)}")
 
     # --- Skepticism (simple independence-aware trust) ---
     def skepticism(self, source_ids: List[str]) -> float:
@@ -259,6 +303,11 @@ class ContinuousLearner:
         if pr.brier is not None:
             self.total_reward += S_rules.reward_scale * max(0.0, 0.2 - pr.brier)
 
+        # Log prediction resolution
+        if self.logger:
+            result = "correct" if pr.correct else "incorrect"
+            self.logger.info(f"ACTION: prediction_update | subject={pr.subject} | result={result} | brier={pr.brier:.4f}")
+
         # update source trust if scenario referenced sources later (you can expand)
         # (toy: nudge GK already updated during ingestion)
 
@@ -270,10 +319,59 @@ class ContinuousLearner:
             s.trust = 0.9 * s.trust + 0.1 * 0.5
 
         # note potential biases (toy: if a subject only has 1 source)
+        bias_count_before = len(self.bias_notes)
         for subj, prog in self.progress.items():
             if len(prog.distinct_sources) <= 1 and prog.seen_items >= 3:
                 self.bias_notes.append(f"[{time.ctime()}] Subject '{subj}' may be source-biased.")
+        
+        # Log reflection event
+        if self.logger:
+            new_biases = len(self.bias_notes) - bias_count_before
+            mean_brier = self.predictor.mean_brier()
+            brier_str = f"{mean_brier:.4f}" if mean_brier is not None else "N/A"
+            self.logger.info(f"ACTION: self_reflection | event_count={self.event_count} | new_biases={new_biases} | mean_brier={brier_str}")
+        
         self.last_reeval_event = self.event_count
+        
+        # Generate metrics report after reflection
+        self._generate_metrics_report()
+
+    # --- Metrics Reporting ---
+    def _generate_metrics_report(self):
+        """Generate a JSON metrics report after reflection cycles."""
+        reports_dir = Path("reports")
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Calculate metrics
+        total_predictions = len(self.predictor.history)
+        resolved_predictions = [p for p in self.predictor.history if p.resolved]
+        correct_predictions = [p for p in resolved_predictions if p.correct]
+        
+        accuracy = len(correct_predictions) / len(resolved_predictions) if resolved_predictions else 0.0
+        mean_brier = self.predictor.mean_brier()
+        
+        metrics = {
+            "timestamp": time.time(),
+            "event_count": self.event_count,
+            "total_reward": round(self.total_reward, 4),
+            "accuracy": round(accuracy, 4) if resolved_predictions else None,
+            "calibration_brier": round(mean_brier, 4) if mean_brier else None,
+            "total_predictions": total_predictions,
+            "resolved_predictions": len(resolved_predictions),
+            "bias_count": len(self.bias_notes),
+            "subjects_tracked": len(self.progress),
+            "sources_count": len(self.sources.sources),
+        }
+        
+        # Write report
+        timestamp_str = time.strftime("%Y%m%d_%H%M%S", time.gmtime(metrics["timestamp"]))
+        report_path = reports_dir / f"metrics_{timestamp_str}.json"
+        with open(report_path, "w") as f:
+            json.dump(metrics, f, indent=2)
+        
+        if self.logger:
+            accuracy_str = f"{accuracy:.4f}" if resolved_predictions else "N/A"
+            self.logger.info(f"ACTION: metrics_report | path={report_path.name} | accuracy={accuracy_str}")
 
     # --- Utility / Inspect ---
     def subject_report(self, subject: str) -> Dict[str, Any]:
