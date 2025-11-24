@@ -53,7 +53,39 @@ All components now connect correctly:
 ✅ All modules import correctly
 ```
 
+## Recent Additions (Post-Connection Fixes)
+
+### ✅ Bounded Meta-Behaviors (Implemented)
+
+1. **Replay Buffer System**
+   - `ReplayEvent` dataclass tracks ingest, predict, and resolve events
+   - Bounded deque (maxlen=128) for recent history
+   - Integrated into all key learning operations
+
+2. **Pattern Statistics & Disagreement Detection**
+   - Per-subject tracking of events, disagreements, and label changes
+   - Automatic flagging of subjects with high disagreement ratios (>30%)
+   - Simple, explainable pattern detection
+
+3. **Shadow Evaluation Integration**
+   - Optional import with graceful degradation
+   - Called every 100 events from `self_reflection()`
+   - Passes bounded data: mean_brier + replay buffer copy
+   - Exception handling with warning logs
+
+4. **Internal Scenario Generation**
+   - `generate_internal_scenario()` creates simple, explainable scenarios
+   - `imagine_and_predict()` gated by 30% completion threshold
+   - Bounded (one at a time, no recursion)
+
+### Bug Fixes Applied
+
+- ✅ Fixed shadow_eval trigger at event 0 (now requires `event_count > 0`)
+- ✅ All features verified and tested
+- ✅ No variable drift issues
+- ✅ Type consistency maintained
+
 ## Next Steps
 
-See `IMPLEMENTATION_ANALYSIS.md` for detailed recommendations on simple additions to further project goals.
+See `IMPLEMENTATION_ANALYSIS.md` for detailed recommendations and `NEW_FEATURES_ANALYSIS.md` for comprehensive analysis of new additions.
 

@@ -26,6 +26,15 @@ except ImportError:
     CHECKPOINT_AVAILABLE = False
     def create_checkpoint(*args, **kwargs):
         pass
+try:
+    try:
+        from src.shadow_eval import run_shadow_eval
+    except ImportError:
+        from shadow_eval import run_shadow_eval
+except ImportError:
+    def run_shadow_eval(*args, **kwargs):
+        return None
+
 
 # ----------  Static Rules (frozen config)  ----------
 
@@ -39,6 +48,9 @@ class StaticRules:
     checkpoint_interval_events: int = 50                 # Checkpoint every N events
     replay_buffer_size: int = 128
     reward_scale: float = 0.1                            # small continual rewards
+    shadow_eval_after_events: int = 100       # how often we *may* call shadow_eval
+    max_shadow_eval_runtime_sec: float = 2.0  # soft bound for safety
+    disagreement_ratio_warn: float = 0.3      # if disagreements/events > 0.3, flag subject
 
 S_rules = StaticRules()
 
@@ -174,6 +186,17 @@ class Predictor:
             return None
         return sum(self.calibration_window) / len(self.calibration_window)
 
+# ----------  Replay Buffer  ----------
+
+@dataclass
+class ReplayEvent:
+    kind: str                 # 'ingest', 'predict', 'resolve'
+    subject: str
+    label: Optional[float] = None      # for ingest / resolve
+    prob: Optional[float] = None       # for predict / resolve
+    correct: Optional[bool] = None     # for resolve
+    timestamp: float = field(default_factory=time.time)
+
 # ----------  Continuous Learner Orchestrator  ----------
 
 class ContinuousLearner:
@@ -195,6 +218,15 @@ class ContinuousLearner:
         self.enable_logging = enable_logging
         self.enable_checkpoints = enable_checkpoints and CHECKPOINT_AVAILABLE
         self.log_path = Path("logs/journal.log")
+        self.replay: deque[ReplayEvent] = deque(maxlen=S_rules.replay_buffer_size)
+        # simple per-subject pattern stats
+        self.pattern_stats: Dict[str, Dict[str, Any]] = defaultdict(lambda: {
+            "events": 0,
+            "disagreements": 0,
+            "last_label": None,
+            "last_seen": 0.0,
+        })
+
         if self.enable_logging:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
             logging.basicConfig(
@@ -235,6 +267,21 @@ class ContinuousLearner:
         # reward small increments for procedural compliance (non-harmful, documented)
         self.total_reward += S_rules.reward_scale * 0.01
         self.event_count += 1
+    
+        # Track replay + simple disagreement pattern
+        self.replay.append(ReplayEvent(
+            kind="ingest",
+            subject=subject,
+            label=float(label) if isinstance(label, (int, float)) else None,
+            timestamp=time.time()
+        ))
+        stats = self.pattern_stats[subject]
+        stats["events"] += 1
+        stats["last_seen"] = time.time()
+        if label is not None and isinstance(label, (int, float)):
+            if stats["last_label"] is not None and stats["last_label"] != label:
+                stats["disagreements"] += 1
+            stats["last_label"] = label
 
         # Log ingestion event
         if self.logger:
@@ -290,6 +337,14 @@ class ContinuousLearner:
             bonus = max(0.0, 0.25 - mean_brier) * S_rules.reward_scale
             self.total_reward += bonus
 
+        self.replay.append(ReplayEvent(
+            kind="predict",
+            subject=subject,
+            prob=prob,
+            timestamp=rec.timestamp
+        ))
+
+
         return len(self.predictor.history) - 1  # index to resolve later
 
     def resolve_prediction(self, idx: int, observed: int):
@@ -302,6 +357,15 @@ class ContinuousLearner:
         # calibration reward (lower brier better)
         if pr.brier is not None:
             self.total_reward += S_rules.reward_scale * max(0.0, 0.2 - pr.brier)
+
+        self.replay.append(ReplayEvent(
+            kind="resolve",
+            subject=pr.subject,
+            label=float(observed),
+            prob=pr.prob,
+            correct=pr.correct,
+            timestamp=pr.timestamp
+        ))
 
         # Log prediction resolution
         if self.logger:
@@ -323,18 +387,69 @@ class ContinuousLearner:
         for subj, prog in self.progress.items():
             if len(prog.distinct_sources) <= 1 and prog.seen_items >= 3:
                 self.bias_notes.append(f"[{time.ctime()}] Subject '{subj}' may be source-biased.")
+
+        # pattern-based warnings (disagreement-heavy subjects)
+        for subj, stats in self.pattern_stats.items():
+            if stats["events"] >= 5:  # don’t warn too early
+                ratio = stats["disagreements"] / max(1, stats["events"])
+                if ratio > S_rules.disagreement_ratio_warn:
+                    note = f"[{time.ctime()}] Subject '{subj}' shows high disagreement ratio={ratio:.2f}."
+                    self.bias_notes.append(note)
+                    # optional: register a link to indicate internal conflict pattern
+                    self.links.append((subj, "high_disagreement", subj))
         
         # Log reflection event
         if self.logger:
             new_biases = len(self.bias_notes) - bias_count_before
             mean_brier = self.predictor.mean_brier()
             brier_str = f"{mean_brier:.4f}" if mean_brier is not None else "N/A"
-            self.logger.info(f"ACTION: self_reflection | event_count={self.event_count} | new_biases={new_biases} | mean_brier={brier_str}")
-        
+            self.logger.info(
+                f"ACTION: self_reflection | event_count={self.event_count} | "
+                f"new_biases={new_biases} | mean_brier={brier_str}"
+            )
+
         self.last_reeval_event = self.event_count
+
+        # bounded shadow_eval (only after we have meaningful data)
+        if self.event_count > 0 and (self.event_count % S_rules.shadow_eval_after_events) == 0:
+            try:
+                mean_brier = self.predictor.mean_brier()
+                run_shadow_eval(
+                    learner=self,
+                    mean_brier=mean_brier,
+                    replay=list(self.replay)
+                )
+            except Exception as e:
+                if self.logger:
+                    self.logger.warning(f"ACTION: shadow_eval_failed | error={str(e)}")
         
         # Generate metrics report after reflection
         self._generate_metrics_report()
+
+    # --- Internal Prediction and Imagination ---
+    def generate_internal_scenario(self, subject: str) -> Any:
+        """
+        Very simple placeholder: generate a toy scenario for a subject.
+        This should stay explainable and bounded.
+        """
+        # Example heuristic: just echo the subject with a timestamp
+        return {
+            "subject": subject,
+            "hypothesis_time": time.time(),
+            "note": "auto-generated internal scenario"
+        }
+
+    def imagine_and_predict(self, subject: str, evidence_hint: Optional[float] = None) -> Optional[int]:
+        """
+        Gated internal prediction: only allowed when completion passes threshold.
+        Returns prediction index or None if not allowed.
+        """
+        if not self.can_predict_internal(subject):
+            return None
+        scenario = self.generate_internal_scenario(subject)
+        return self.predict(subject, scenario, evidence_hint=evidence_hint, own=True)
+
+
 
     # --- Metrics Reporting ---
     def _generate_metrics_report(self):
