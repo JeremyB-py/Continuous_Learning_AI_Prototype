@@ -197,6 +197,16 @@ class ReplayEvent:
     correct: Optional[bool] = None     # for resolve
     timestamp: float = field(default_factory=time.time)
 
+# Helper function for pattern stats (must be at module level for pickleability)
+def _new_pattern_stat() -> Dict[str, Any]:
+    """Create a new pattern stat dict (pickleable function)"""
+    return {
+        "events": 0,
+        "disagreements": 0,
+        "last_label": None,
+        "last_seen": 0.0,
+    }
+
 # ----------  Continuous Learner Orchestrator  ----------
 
 class ContinuousLearner:
@@ -219,14 +229,10 @@ class ContinuousLearner:
         self.enable_checkpoints = enable_checkpoints and CHECKPOINT_AVAILABLE
         self.log_path = Path("logs/journal.log")
         self.replay: deque[ReplayEvent] = deque(maxlen=S_rules.replay_buffer_size)
-        # simple per-subject pattern stats
-        self.pattern_stats: Dict[str, Dict[str, Any]] = defaultdict(lambda: {
-            "events": 0,
-            "disagreements": 0,
-            "last_label": None,
-            "last_seen": 0.0,
-        })
+        # simple per-subject pattern stats (using function for pickleability)
+        self.pattern_stats: Dict[str, Dict[str, Any]] = defaultdict(_new_pattern_stat)
 
+        # Initialize logger
         if self.enable_logging:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
             logging.basicConfig(
@@ -285,7 +291,13 @@ class ContinuousLearner:
 
         # Log ingestion event
         if self.logger:
-            self.logger.info(f"ACTION: add_claim | subject={subject} | sources={','.join(source_names)} | label={label} | delta_reward=+{S_rules.reward_scale * 0.01:.4f}")
+            sources_str = ','.join(source_names)
+            label_str = str(label) if label is not None else "None"
+            self.logger.info(
+                f"INGEST | subject={subject:30s} | sources={sources_str:20s} | "
+                f"label={label_str:5s} | reward=+{S_rules.reward_scale * 0.01:.4f} | "
+                f"events={self.event_count}"
+            )
 
         # periodic re-eval
         if self.event_count - self.last_reeval_event >= S_rules.reevaluation_interval_events:
@@ -294,10 +306,13 @@ class ContinuousLearner:
         # periodic checkpointing
         if self.enable_checkpoints and (self.event_count - self.last_checkpoint_event >= S_rules.checkpoint_interval_events):
             try:
-                create_checkpoint(self, label=f"event_{self.event_count}")
+                ckpt_path = create_checkpoint(self, label=f"event_{self.event_count}")
                 self.last_checkpoint_event = self.event_count
                 if self.logger:
-                    self.logger.info(f"ACTION: checkpoint_created | event_count={self.event_count}")
+                    self.logger.info(
+                        f"CHECKPT | created={ckpt_path.name:50s} | events={self.event_count:4d} | "
+                        f"subjects={len(self.progress):2d} | replay_size={len(self.replay):3d}"
+                    )
             except Exception as e:
                 if self.logger:
                     self.logger.warning(f"ACTION: checkpoint_failed | error={str(e)}")
@@ -369,8 +384,12 @@ class ContinuousLearner:
 
         # Log prediction resolution
         if self.logger:
-            result = "correct" if pr.correct else "incorrect"
-            self.logger.info(f"ACTION: prediction_update | subject={pr.subject} | result={result} | brier={pr.brier:.4f}")
+            result = "✓" if pr.correct else "✗"
+            self.logger.info(
+                f"RESOLVE | subject={pr.subject:30s} | result={result} | "
+                f"prob={pr.prob:.3f} | observed={observed} | brier={pr.brier:.4f} | "
+                f"reward={S_rules.reward_scale * (1.0 if pr.correct else 0.0) + S_rules.reward_scale * max(0.0, 0.2 - pr.brier):.4f}"
+            )
 
         # update source trust if scenario referenced sources later (you can expand)
         # (toy: nudge GK already updated during ingestion)
@@ -403,9 +422,12 @@ class ContinuousLearner:
             new_biases = len(self.bias_notes) - bias_count_before
             mean_brier = self.predictor.mean_brier()
             brier_str = f"{mean_brier:.4f}" if mean_brier is not None else "N/A"
+            subjects_count = len(self.progress)
+            sources_count = len(self.sources.sources)
             self.logger.info(
-                f"ACTION: self_reflection | event_count={self.event_count} | "
-                f"new_biases={new_biases} | mean_brier={brier_str}"
+                f"REFLECT | events={self.event_count:4d} | subjects={subjects_count:2d} | "
+                f"sources={sources_count:2d} | new_biases={new_biases:2d} | "
+                f"mean_brier={brier_str:>6s} | total_reward={self.total_reward:.4f}"
             )
 
         self.last_reeval_event = self.event_count
@@ -421,7 +443,9 @@ class ContinuousLearner:
                 )
             except Exception as e:
                 if self.logger:
-                    self.logger.warning(f"ACTION: shadow_eval_failed | error={str(e)}")
+                    self.logger.warning(
+                        f"SHADOW | FAILED | events={self.event_count:4d} | error={str(e)[:50]}"
+                    )
         
         # Generate metrics report after reflection
         self._generate_metrics_report()
@@ -486,7 +510,11 @@ class ContinuousLearner:
         
         if self.logger:
             accuracy_str = f"{accuracy:.4f}" if resolved_predictions else "N/A"
-            self.logger.info(f"ACTION: metrics_report | path={report_path.name} | accuracy={accuracy_str}")
+            self.logger.info(
+                f"METRICS | report={report_path.name:40s} | accuracy={accuracy_str:>6s} | "
+                f"predictions={total_predictions:3d}/{len(resolved_predictions):3d} | "
+                f"bias_count={len(self.bias_notes):2d}"
+            )
 
     # --- Utility / Inspect ---
     def subject_report(self, subject: str) -> Dict[str, Any]:
@@ -501,24 +529,148 @@ class ContinuousLearner:
 
 # ----------------  Demo usage  ----------------
 if __name__ == "__main__":
+    import random
+    
+    # Use constrained randomness for reproducibility
+    random.seed(42)
+    
     agent = ContinuousLearner()
-
-    # Ingest a few labeled facts for a toy binary subject
-    agent.ingest("weather.rain_tomorrow", info={"city":"Austin"}, label=0, source_names=["NOAA"])
-    agent.ingest("weather.rain_tomorrow", info={"city":"Austin"}, label=1, source_names=["LocalNews"])
-    agent.ingest("weather.rain_tomorrow", info={"city":"Austin"}, label=0, source_names=["NOAA", "WXBlog"])
-
-    print("REPORT A:", agent.subject_report("weather.rain_tomorrow"))
-
-    # External prediction allowed?
-    if agent.can_predict_external("weather.rain_tomorrow"):
-        idx = agent.predict("weather.rain_tomorrow",
-                            scenario={"city":"Austin","day":"tomorrow"},
-                            evidence_hint=0.3, own=False)
-        # Later, resolve when truth arrives:
-        agent.resolve_prediction(idx, observed=0)
-
-    print("REPORT B:", agent.subject_report("weather.rain_tomorrow"))
-    print("Mean Brier:", agent.predictor.mean_brier())
-    print("Bias notes:", agent.bias_notes)
-    print("Total reward:", round(agent.total_reward, 3))
+    
+    # Define multiple subjects and diverse sources
+    subjects = [
+        "weather.rain_tomorrow",
+        "stock.market_up",
+        "traffic.heavy",
+        "event.attendance_high"
+    ]
+    
+    sources = [
+        "NOAA", "Bloomberg", "Waze", "LocalNews", "ExpertPanel",
+        "WeatherChannel", "Reuters", "CityTraffic", "EventOrganizer"
+    ]
+    
+    print("=" * 80)
+    print("Continuous Learning AI Prototype - Enhanced Demo")
+    print("=" * 80)
+    print()
+    
+    # Phase 1: Initial ingestion with constrained randomness
+    print("Phase 1: Initial Knowledge Ingestion")
+    print("-" * 80)
+    
+    for i in range(25):
+        subject = random.choice(subjects)
+        # Constrain source selection: prefer some sources more often
+        source_weights = [0.3, 0.2, 0.15, 0.1, 0.1, 0.05, 0.05, 0.03, 0.02]
+        source = random.choices(sources, weights=source_weights)[0]
+        
+        # Introduce some patterns: weather tends to be 0, stock tends to be 1
+        if "weather" in subject:
+            label = 0 if random.random() < 0.7 else 1
+        elif "stock" in subject:
+            label = 1 if random.random() < 0.65 else 0
+        else:
+            label = random.choice([0, 1])
+        
+        # Sometimes use multiple sources
+        source_list = [source]
+        if random.random() < 0.3:
+            source_list.append(random.choice([s for s in sources if s != source]))
+        
+        agent.ingest(subject, info={"iteration": i, "demo": True}, 
+                    label=label, source_names=source_list)
+    
+    print(f"\nInitial State:")
+    print(f"  Events: {agent.event_count}")
+    print(f"  Subjects tracked: {len(agent.progress)}")
+    print(f"  Sources: {len(agent.sources.sources)}")
+    print(f"  Replay buffer: {len(agent.replay)}/{S_rules.replay_buffer_size}")
+    print()
+    
+    # Phase 2: Make predictions
+    print("Phase 2: Making Predictions")
+    print("-" * 80)
+    
+    predictions = []
+    for subject in subjects:
+        if agent.can_predict_external(subject):
+            report = agent.subject_report(subject)
+            print(f"  {subject}: {report['completion_percent']:.1f}% complete, "
+                  f"prior={report['gk_prior']:.3f}")
+            
+            # Use constrained randomness for evidence hints
+            evidence_hint = random.uniform(0.2, 0.8) if random.random() < 0.6 else None
+            idx = agent.predict(subject, 
+                              scenario={"demo": True, "subject": subject},
+                              evidence_hint=evidence_hint, own=False)
+            predictions.append((subject, idx))
+    
+    print(f"\n  Made {len(predictions)} predictions")
+    print()
+    
+    # Phase 3: Resolve predictions with realistic outcomes
+    print("Phase 3: Resolving Predictions")
+    print("-" * 80)
+    
+    for subject, idx in predictions:
+        pr = agent.predictor.history[idx]
+        # Resolve with pattern-aware outcomes
+        if "weather" in subject:
+            observed = 0 if random.random() < 0.7 else 1
+        elif "stock" in subject:
+            observed = 1 if random.random() < 0.65 else 0
+        else:
+            observed = random.choice([0, 1])
+        
+        agent.resolve_prediction(idx, observed)
+        pr = agent.predictor.history[idx]  # Get updated record
+        result = "✓" if pr.correct else "✗"
+        brier_str = f"{pr.brier:.4f}" if pr.brier is not None else "N/A"
+        print(f"  {subject}: {result} (pred={pr.prob:.3f}, obs={observed}, "
+              f"brier={brier_str})")
+    
+    print()
+    
+    # Phase 4: Continue learning and trigger reflection
+    print("Phase 4: Continued Learning (Triggering Reflection)")
+    print("-" * 80)
+    
+    # Add more events to trigger reflection (every 25 events)
+    events_needed = max(0, S_rules.reevaluation_interval_events - agent.event_count + 1)
+    for i in range(events_needed):
+        subject = random.choice(subjects)
+        source = random.choice(sources)
+        label = random.choice([0, 1])
+        agent.ingest(subject, info={"iteration": i + 25}, 
+                    label=label, source_names=[source])
+    
+    print(f"  Reflection triggered at event {agent.event_count}")
+    print()
+    
+    # Final report
+    print("=" * 80)
+    print("Final System State")
+    print("=" * 80)
+    
+    for subject in subjects:
+        report = agent.subject_report(subject)
+        print(f"\n{subject}:")
+        print(f"  Completion: {report['completion_percent']:.1f}%")
+        print(f"  Items: {report['items']}")
+        print(f"  Sources: {report['distinct_sources']}")
+        print(f"  GK Prior: {report['gk_prior']:.3f}")
+    
+    print(f"\nOverall Metrics:")
+    print(f"  Total events: {agent.event_count}")
+    print(f"  Total reward: {agent.total_reward:.4f}")
+    mean_brier = agent.predictor.mean_brier()
+    brier_str = f"{mean_brier:.4f}" if mean_brier is not None else "N/A"
+    print(f"  Mean Brier: {brier_str}")
+    print(f"  Bias notes: {len(agent.bias_notes)}")
+    if agent.bias_notes:
+        for note in agent.bias_notes[-3:]:  # Show last 3
+            print(f"    - {note}")
+    print(f"  Replay buffer: {len(agent.replay)}/{S_rules.replay_buffer_size}")
+    print(f"  Pattern stats: {len(agent.pattern_stats)} subjects tracked")
+    print()
+    print("=" * 80)
