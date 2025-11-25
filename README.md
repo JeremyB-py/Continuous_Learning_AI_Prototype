@@ -53,7 +53,7 @@ Subsequent phases will add persistent memory, replay buffers, online model integ
 ```
 CLAIP/
 ├── src/
-│   ├── continuous_learner.py       # Core learner logic
+│   ├── CLAIP.py                    # Core learner logic (main implementation)
 │   ├── ethics.py                   # Moral enforcement & validation
 │   ├── checkpoint.py               # Snapshot and rollback utilities
 │   ├── shadow_eval.py              # Parallel test runner
@@ -95,7 +95,7 @@ CLAIP/
 Run the toy simulation:
 
 ```bash
-python src/continuous_learner.py
+python src/CLAIP.py
 ```
 
 This launches a minimal agent that:
